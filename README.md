@@ -1,6 +1,11 @@
 # FinalDoc
  Exports autodesk inventor parts and assemblies into a preset file scheme
 
+
+
+
+
+
 The code performs the following actions:
 
 Creates a folder on the desktop with a name based on the first four numbers of a property called "Part Number," followed by "Final Doc."
