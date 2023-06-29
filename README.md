@@ -1,5 +1,6 @@
 # FinalDoc
  Exports autodesk inventor parts and assemblies into a preset file scheme
+ written as a autodesk inventor vb.net ilogic external rule
 
 
 
