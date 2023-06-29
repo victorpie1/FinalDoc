@@ -1,0 +1,134 @@
+﻿
+
+Imports System.IO
+Imports Inventor
+
+Public Sub Main()
+    ' Getting the application object
+    Dim app As Inventor.Application = ThisApplication
+	
+	' Define the export folder path
+Dim exportFolder As String = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop), "Exports")
+
+    ' Getting the part number
+    Dim partNumber As Object = app.ActiveDocument.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value
+    Dim partNumberStr As String = CStr(partNumber)
+
+    ' Creating a directory on the desktop
+    Dim finalDocFolderName As String = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop), partNumberStr.Substring(0, 4) & " Final Doc")
+    Directory.CreateDirectory(finalDocFolderName)
+
+    ' Creating the CAD and Drawings directories
+    Dim cadFolderName As String = System.IO.Path.Combine(finalDocFolderName, "CAD")
+    Dim drawingsFolderName As String = System.IO.Path.Combine(finalDocFolderName, "Drawings")
+    Directory.CreateDirectory(cadFolderName)
+    Directory.CreateDirectory(drawingsFolderName)
+
+    ' Creating the subdirectories for the open assembly
+    Dim assemblyFolderName As String = partNumberStr
+    Dim assemblyCadFolderName As String = System.IO.Path.Combine(cadFolderName, assemblyFolderName)
+    Dim assemblyDrawingsFolderName As String = System.IO.Path.Combine(drawingsFolderName, assemblyFolderName)
+    Directory.CreateDirectory(assemblyCadFolderName)
+    Directory.CreateDirectory(assemblyDrawingsFolderName)
+
+    ' Running the iLogic rules
+    app.ActiveDocument.Update2(True)
+    iLogicVb.RunExternalRule("FinalDoc_DWG")
+    iLogicVb.RunExternalRule("FinalDoc_STEP")
+
+    ' Moving the .step files
+    For Each file As String In Directory.GetFiles(exportFolder, "*.stp")
+        Dim destinationPath As String = System.IO.Path.Combine(assemblyCadFolderName, System.IO.Path.GetFileName(File))
+        If System.IO.File.Exists(destinationPath) Then System.IO.File.Delete(destinationPath)
+        System.IO.File.Move(File, destinationPath)
+    Next
+
+    ' Moving the .dwg files
+    For Each file As String In Directory.GetFiles(exportFolder, "*.dwg")
+        Dim destinationPath As String = System.IO.Path.Combine(assemblyDrawingsFolderName, System.IO.Path.GetFileName(File))
+        If System.IO.File.Exists(destinationPath) Then System.IO.File.Delete(destinationPath)
+        System.IO.File.Move(File, destinationPath)
+    Next
+
+
+
+' Getting the active assembly document
+Dim assembly As AssemblyDocument = app.ActiveDocument
+
+' Save the full file name of the main assembly
+Dim mainAssemblyFileName As String = assembly.FullFileName
+
+    ' Create a HashSet to track the names of processed subassemblies
+Dim processedSubAssemblies As New HashSet(Of String)
+
+
+' Opening subassemblies and repeating the process
+For Each subAssembly As ComponentOccurrence In assembly.ComponentDefinition.Occurrences
+    If subAssembly.BOMStructure = BOMStructureEnum.kNormalBOMStructure Then
+        ' Get the name of the subassembly
+        Dim subAssemblyName As String = subAssembly.Name
+
+        ' Skip the subassembly if it has already been processed
+        If processedSubAssemblies.Contains(subAssemblyName) Then
+            Continue For
+        End If
+
+
+
+' Opening the subassembly
+Dim openedDoc As Document = app.Documents.Open(subAssembly.ReferencedDocumentDescriptor.ReferencedFileDescriptor.FullFileName, True)
+
+
+        ' Ensure that the document is an AssemblyDocument before proceeding
+        If TypeOf openedDoc Is AssemblyDocument Then
+    Dim subAssemblyDoc As AssemblyDocument = DirectCast(openedDoc, AssemblyDocument)
+			
+
+
+ 
+
+            ' Repeating the steps for the subassembly
+            partNumber = subAssemblyDoc.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString()
+            assemblyFolderName = partNumber
+            assemblyCadFolderName = System.IO.Path.Combine(cadFolderName, assemblyFolderName)
+            assemblyDrawingsFolderName = System.IO.Path.Combine(drawingsFolderName, assemblyFolderName)
+            Directory.CreateDirectory(assemblyCadFolderName)
+            Directory.CreateDirectory(assemblyDrawingsFolderName)
+			
+			' Activate the subassembly document
+openedDoc.Activate()
+
+            ' Running the iLogic rules
+            openedDoc.Update()
+
+            iLogicVb.RunExternalRule("FinalDoc_DWG")
+            iLogicVb.RunExternalRule("FinalDoc_STEP")
+			
+ ' Moving the .step files for subassemblies
+    For Each file As String In Directory.GetFiles(exportFolder, "*.stp")
+        Dim destinationPath As String = System.IO.Path.Combine(assemblyCadFolderName, System.IO.Path.GetFileName(File))
+        If System.IO.File.Exists(destinationPath) Then System.IO.File.Delete(destinationPath)
+        System.IO.File.Move(File, destinationPath)
+    Next
+
+    ' Moving the .dwg files for subassemblies
+    For Each file As String In Directory.GetFiles(exportFolder, "*.dwg")
+        Dim destinationPath As String = System.IO.Path.Combine(assemblyDrawingsFolderName, System.IO.Path.GetFileName(File))
+        If System.IO.File.Exists(destinationPath) Then System.IO.File.Delete(destinationPath)
+        System.IO.File.Move(File, destinationPath)
+    Next
+
+            ' Close the subassembly document
+            subAssemblyDoc.Close(True)
+            
+            ' Add the subassembly's name to the HashSet
+            processedSubAssemblies.Add(subAssemblyName)
+        Else
+            ' If the document is not an AssemblyDocument, you can close it right away, or handle it differently depending on your needs
+            openedDoc.Close(True)
+        End If
+    End If
+Next
+
+MessageBox.Show("Final Doc Ready")
+End Sub

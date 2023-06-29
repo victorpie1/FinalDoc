@@ -1,0 +1,80 @@
+﻿Imports System.IO
+Imports Inventor
+'exports all parts related to the currently open assembly, ignores parts in any subassemblies
+
+Public Class ThisRule
+    ' Global variable for the Translator AddIn.
+    Private _STEPTranslator As TranslatorAddIn
+
+    ' Main Sub
+    Sub Main()
+        ' Set the STEP Translator.
+        SetSTEPTranslator()
+
+        ' Get the current document.
+        Dim doc As Document = ThisApplication.ActiveDocument
+		
+		doc.Update()
+
+        Select Case doc.DocumentType
+            Case DocumentTypeEnum.kPartDocumentObject
+                ' If it's a part, export it.
+                ExportStep(doc)
+            Case DocumentTypeEnum.kAssemblyDocumentObject
+                Dim asmDoc As AssemblyDocument = TryCast(doc, AssemblyDocument)
+                If asmDoc IsNot Nothing Then
+                    ' Export the main assembly.
+                    ExportStep(asmDoc)
+                End If
+            Case Else
+                ' If it's neither a part nor assembly, show error message and stop execution.
+                MessageBox.Show("This rule only supports Part and Assembly documents.")
+                Exit Sub
+        End Select
+    End Sub
+
+    ' Sub to export a part or assembly as STEP file.
+    Private Sub ExportStep(doc As Document)
+        Dim oOptions As NameValueMap = ThisApplication.TransientObjects.CreateNameValueMap
+        Dim oContext As TranslationContext = ThisApplication.TransientObjects.CreateTranslationContext
+        ' Set the output directory path and the filename.
+        Dim dirPath As String = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop), "Exports")
+        Dim fileName As String = System.IO.Path.Combine(dirPath, System.IO.Path.GetFileNameWithoutExtension(doc.FullFileName) & ".stp")
+
+        Try
+            ' If the output directory doesn't exist, create it.
+            If Not System.IO.Directory.Exists(dirPath) Then
+                System.IO.Directory.CreateDirectory(dirPath)
+            End If
+
+            ' If the STEP Translator supports the document, export it.
+            If _STEPTranslator.HasSaveCopyAsOptions(doc, oContext, oOptions) Then
+                oOptions.Value("ApplicationProtocolType") = 3
+                oContext.Type = IOMechanismEnum.kFileBrowseIOMechanism
+                Dim oData As DataMedium = ThisApplication.TransientObjects.CreateDataMedium
+                oData.FileName = fileName
+                _STEPTranslator.SaveCopyAs(doc, oContext, oOptions, oData)
+            End If
+        Catch ex As Exception
+            ' Show error message if there's an exception.
+            MessageBox.Show(String.Format("Error exporting {0}: {1}", doc.DisplayName, ex.Message))
+        End Try
+    End Sub
+
+    ' Sub to set the STEP Translator.
+    Private Sub SetSTEPTranslator()
+        For Each oAddIn As ApplicationAddIn In ThisApplication.ApplicationAddIns
+            ' If the current AddIn is the STEP Translator, set it.
+            If oAddIn.ClassIdString = "{90AF7F40-0C01-11D5-8E83-0010B541CD80}" Then
+                _STEPTranslator = oAddIn
+                Exit Sub
+            End If
+        Next
+
+        ' If there's no STEP Translator, throw an exception.
+        Throw New Exception("Could not access STEP translator.")
+    End Sub
+End Class
+
+
+
