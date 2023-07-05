@@ -1,134 +1,262 @@
-﻿
-
-Imports System.IO
+﻿Imports System.IO
 Imports Inventor
+Imports System.Runtime.InteropServices
+
+
+
+
+
+
+
+'exports all parts related to the currently open assembly, ignores parts in any subassemblies
+
+Public Class ThisRule
+Private _DWGTranslator As TranslatorAddIn
+Private _STEPTranslator As TranslatorAddIn
 
 Public Sub Main()
-    ' Getting the application object
+    ' Get the application object
     Dim app As Inventor.Application = ThisApplication
-	
-	' Define the export folder path
-Dim exportFolder As String = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop), "Exports")
 
-    ' Getting the part number
-    Dim partNumber As Object = app.ActiveDocument.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value
-    Dim partNumberStr As String = CStr(partNumber)
+    ' Initialize the translators
+    SetDWGTranslator()
+    SetSTEPTranslator()
 
-    ' Creating a directory on the desktop
-    Dim finalDocFolderName As String = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop), partNumberStr.Substring(0, 4) & " Final Doc")
-    Directory.CreateDirectory(finalDocFolderName)
-
-    ' Creating the CAD and Drawings directories
-    Dim cadFolderName As String = System.IO.Path.Combine(finalDocFolderName, "CAD")
-    Dim drawingsFolderName As String = System.IO.Path.Combine(finalDocFolderName, "Drawings")
-    Directory.CreateDirectory(cadFolderName)
-    Directory.CreateDirectory(drawingsFolderName)
-
-    ' Creating the subdirectories for the open assembly
-    Dim assemblyFolderName As String = partNumberStr
-    Dim assemblyCadFolderName As String = System.IO.Path.Combine(cadFolderName, assemblyFolderName)
-    Dim assemblyDrawingsFolderName As String = System.IO.Path.Combine(drawingsFolderName, assemblyFolderName)
-    Directory.CreateDirectory(assemblyCadFolderName)
-    Directory.CreateDirectory(assemblyDrawingsFolderName)
-
-    ' Running the iLogic rules
-    app.ActiveDocument.Update2(True)
-    iLogicVb.RunExternalRule("FinalDoc_DWG")
-    iLogicVb.RunExternalRule("FinalDoc_STEP")
-
-    ' Moving the .step files
-    For Each file As String In Directory.GetFiles(exportFolder, "*.stp")
-        Dim destinationPath As String = System.IO.Path.Combine(assemblyCadFolderName, System.IO.Path.GetFileName(File))
-        If System.IO.File.Exists(destinationPath) Then System.IO.File.Delete(destinationPath)
-        System.IO.File.Move(File, destinationPath)
-    Next
-
-    ' Moving the .dwg files
-    For Each file As String In Directory.GetFiles(exportFolder, "*.dwg")
-        Dim destinationPath As String = System.IO.Path.Combine(assemblyDrawingsFolderName, System.IO.Path.GetFileName(File))
-        If System.IO.File.Exists(destinationPath) Then System.IO.File.Delete(destinationPath)
-        System.IO.File.Move(File, destinationPath)
-    Next
-
-
-
-' Getting the active assembly document
-Dim assembly As AssemblyDocument = app.ActiveDocument
-
-' Save the full file name of the main assembly
-Dim mainAssemblyFileName As String = assembly.FullFileName
+    ' Get the main assembly document
+    Dim mainAssembly As AssemblyDocument = app.ActiveDocument
 
     ' Create a HashSet to track the names of processed subassemblies
-Dim processedSubAssemblies As New HashSet(Of String)
+    Dim processedSubAssemblies As New HashSet(Of String)
+
+    ' Create a HashSet to track the names of processed parts
+    Dim processedParts As New HashSet(Of String)
+
+    ' Call the ProcessAssembly subroutine for the main assembly
+    ProcessAssembly(mainAssembly, "", processedSubAssemblies, processedParts)
+	
+	
+    MessageBox.Show("Export Complete")
 
 
-' Opening subassemblies and repeating the process
-For Each subAssembly As ComponentOccurrence In assembly.ComponentDefinition.Occurrences
-    If subAssembly.BOMStructure = BOMStructureEnum.kNormalBOMStructure Then
-        ' Get the name of the subassembly
-        Dim subAssemblyName As String = subAssembly.Name
-
-        ' Skip the subassembly if it has already been processed
-        If processedSubAssemblies.Contains(subAssemblyName) Then
-            Continue For
-        End If
-
-
-
-' Opening the subassembly
-Dim openedDoc As Document = app.Documents.Open(subAssembly.ReferencedDocumentDescriptor.ReferencedFileDescriptor.FullFileName, True)
-
-
-        ' Ensure that the document is an AssemblyDocument before proceeding
-        If TypeOf openedDoc Is AssemblyDocument Then
-    Dim subAssemblyDoc As AssemblyDocument = DirectCast(openedDoc, AssemblyDocument)
-			
-
-
- 
-
-            ' Repeating the steps for the subassembly
-            partNumber = subAssemblyDoc.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString()
-            assemblyFolderName = partNumber
-            assemblyCadFolderName = System.IO.Path.Combine(cadFolderName, assemblyFolderName)
-            assemblyDrawingsFolderName = System.IO.Path.Combine(drawingsFolderName, assemblyFolderName)
-            Directory.CreateDirectory(assemblyCadFolderName)
-            Directory.CreateDirectory(assemblyDrawingsFolderName)
-			
-			' Activate the subassembly document
-openedDoc.Activate()
-
-            ' Running the iLogic rules
-            openedDoc.Update()
-
-            iLogicVb.RunExternalRule("FinalDoc_DWG")
-            iLogicVb.RunExternalRule("FinalDoc_STEP")
-			
- ' Moving the .step files for subassemblies
-    For Each file As String In Directory.GetFiles(exportFolder, "*.stp")
-        Dim destinationPath As String = System.IO.Path.Combine(assemblyCadFolderName, System.IO.Path.GetFileName(File))
-        If System.IO.File.Exists(destinationPath) Then System.IO.File.Delete(destinationPath)
-        System.IO.File.Move(File, destinationPath)
-    Next
-
-    ' Moving the .dwg files for subassemblies
-    For Each file As String In Directory.GetFiles(exportFolder, "*.dwg")
-        Dim destinationPath As String = System.IO.Path.Combine(assemblyDrawingsFolderName, System.IO.Path.GetFileName(File))
-        If System.IO.File.Exists(destinationPath) Then System.IO.File.Delete(destinationPath)
-        System.IO.File.Move(File, destinationPath)
-    Next
-
-            ' Close the subassembly document
-            subAssemblyDoc.Close(True)
-            
-            ' Add the subassembly's name to the HashSet
-            processedSubAssemblies.Add(subAssemblyName)
-        Else
-            ' If the document is not an AssemblyDocument, you can close it right away, or handle it differently depending on your needs
-            openedDoc.Close(True)
-        End If
-    End If
-Next
-
-MessageBox.Show("Final Doc Ready")
 End Sub
+
+Public Sub ProcessAssembly(assembly As AssemblyDocument, baseFolder As String, processedSubAssemblies As HashSet(Of String), processedParts As HashSet(Of String), Optional cadFolder As String = Nothing, Optional drawingsFolder As String = Nothing)
+    ' Get the part number
+    Dim fullPartNumber As String = assembly.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString()
+
+    ' Get the main part of the part number (before the colon if any)
+    Dim partNumber As String = fullPartNumber.Split(":")(0)
+
+    ' Check if the assembly has already been processed
+    If processedSubAssemblies.Contains(partNumber) Then
+        Return
+    End If
+
+    ' Create a directory on the desktop if this is the main assembly
+    If String.IsNullOrEmpty(baseFolder) Then
+        baseFolder = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop), partNumber.Substring(0, 4) & " Final Doc")
+    End If
+
+    ' Create the CAD and Drawings directories for the current assembly only if partNumber is 10 or fewer characters
+    If String.IsNullOrEmpty(cadFolder) Or String.IsNullOrEmpty(drawingsFolder) Or partNumber.Length <= 10 Then
+        cadFolder = System.IO.Path.Combine(baseFolder, "CAD", partNumber)
+        drawingsFolder = System.IO.Path.Combine(baseFolder, "Drawings", partNumber)
+        Directory.CreateDirectory(cadFolder)
+        Directory.CreateDirectory(drawingsFolder)
+    End If
+
+    ' Process the subassemblies recursively
+    For Each subAssembly As ComponentOccurrence In assembly.ComponentDefinition.Occurrences
+        If (subAssembly.BOMStructure = BOMStructureEnum.kNormalBOMStructure Or subAssembly.BOMStructure = BOMStructureEnum.kPhantomBOMStructure) And TypeOf subAssembly.Definition.Document Is AssemblyDocument Then
+            ' Open the subassembly
+            Dim subAssemblyDoc As AssemblyDocument = ThisApplication.Documents.Open(subAssembly.ReferencedDocumentDescriptor.ReferencedFileDescriptor.FullFileName, True)
+
+            ' If the subassembly is a phantom, pass the current folders. Otherwise, pass nothing to create new folders.
+            Dim subCadFolder As String = If(subAssemblyDoc.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString().Length > 10, cadFolder, Nothing)
+            Dim subDrawingsFolder As String = If(subAssemblyDoc.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString().Length > 10, drawingsFolder, Nothing)
+
+            ' Process the subassembly, passing the folders
+            ProcessAssembly(subAssemblyDoc, baseFolder, processedSubAssemblies, processedParts, subCadFolder, subDrawingsFolder)
+        End If
+    Next
+
+    ' After processing subassemblies, export the files for the main assembly
+    ' Activate the assembly document
+    assembly.Activate()
+
+    ' Update the assembly document
+    assembly.Update()
+
+    ' Export part files in the assembly
+    ExportPartFiles(assembly, cadFolder, drawingsFolder, processedParts)
+
+    ' Check if assembly (main or sub) has already been processed
+    If Not processedParts.Contains(assembly.DisplayName) Then
+        ' Export the assembly files
+        ExportDWG(assembly, drawingsFolder)
+        ExportStep(assembly, cadFolder)
+
+        ' Add the assembly's part number to the processed parts HashSet
+        processedParts.Add(assembly.DisplayName)
+    End If
+
+    ' Add the assembly's part number to the processed subassemblies HashSet
+    processedSubAssemblies.Add(partNumber)
+End Sub
+
+Private Sub UpdateHoleTables(doc As Document)
+    If doc.DocumentType = DocumentTypeEnum.kDrawingDocumentObject Then
+        Dim oDrawDoc As DrawingDocument = doc
+        For Each oSheet As Sheet In oDrawDoc.Sheets
+            For Each oTable As HoleTable In oSheet.HoleTables
+                For Each col As HoleTableColumn In oTable.HoleTableColumns
+                    If col.Title = "HOLE" Then
+                        Try
+                            col.Title = "hole"
+                            col.Title = "HOLE"
+                        Catch ex As Exception
+                            ' Ignore errors and continue to next column.
+                        End Try
+                    End If
+                Next
+            Next
+        Next
+    End If
+End Sub
+
+Private Sub ExportAssemblyDWGs(occurrences As ComponentOccurrences, dirPath As String)
+    For Each oOcc As ComponentOccurrence In occurrences
+        ' Check if it's a part with a normal BOM structure or an assembly with a normal BOM structure
+        If oOcc.BOMStructure = BOMStructureEnum.kNormalBOMStructure Then
+            ' If it's a part, export it.
+            If oOcc.DefinitionDocumentType = DocumentTypeEnum.kPartDocumentObject Then
+                Dim oPartDoc As PartDocument = TryCast(oOcc.Definition.Document, PartDocument)
+                If oPartDoc IsNot Nothing Then
+                    ExportDWG(oPartDoc, dirPath)
+                    ExportStep(oPartDoc, dirPath)
+                End If
+            End If
+        End If
+    Next
+End Sub
+
+Public Sub ExportPartFiles(assembly As AssemblyDocument, cadFolder As String, drawingsFolder As String, processedParts As HashSet(Of String))
+    For Each occurrence As ComponentOccurrence In assembly.ComponentDefinition.Occurrences
+        If (occurrence.BOMStructure = BOMStructureEnum.kNormalBOMStructure Or occurrence.BOMStructure = BOMStructureEnum.kPhantomBOMStructure) And TypeOf occurrence.Definition.Document Is PartDocument Then
+            Dim part As PartDocument = occurrence.Definition.Document
+            Dim partNumber As String = part.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString().Split(":")(0)
+
+            ' Check if the part has already been processed
+            If processedParts.Contains(partNumber) Then
+                Continue For
+            End If
+
+            ' Export the .dwg and .stp files for the part
+            ExportDWG(part, drawingsFolder)
+
+            ' Add the part's part number to the processed parts HashSet
+            processedParts.Add(partNumber)
+        End If
+    Next
+End Sub
+
+Private Sub ExportDWG(doc As Document, dirPath As String)
+    Dim oDrawingDoc As String = FindDrawingFile(doc)
+    If Not String.IsNullOrEmpty(oDrawingDoc) Then
+        Dim oDWG As Document = ThisApplication.Documents.Open(oDrawingDoc, True)
+        oDWG.Update()
+        SaveCopyAsDWG(oDWG, dirPath)
+        oDWG.Close(True)
+    End If
+End Sub
+
+Private Sub ExportStep(doc As Document, dirPath As String)
+    Dim oOptions As NameValueMap = ThisApplication.TransientObjects.CreateNameValueMap
+    Dim oContext As TranslationContext = ThisApplication.TransientObjects.CreateTranslationContext
+    ' Set the output directory path and the filename.
+
+ Dim fileName As String = System.IO.Path.Combine(dirPath, System.IO.Path.GetFileNameWithoutExtension(doc.FullFileName) & ".stp")
+
+    Try
+        ' If the output directory doesn't exist, create it.
+        If Not System.IO.Directory.Exists(dirPath) Then
+            System.IO.Directory.CreateDirectory(dirPath)
+        End If
+
+        ' If the STEP Translator supports the document, export it.
+        If _STEPTranslator.HasSaveCopyAsOptions(doc, oContext, oOptions) Then
+            oOptions.Value("ApplicationProtocolType") = 3
+            oContext.Type = IOMechanismEnum.kFileBrowseIOMechanism
+            Dim oData As DataMedium = ThisApplication.TransientObjects.CreateDataMedium
+            oData.FileName = fileName
+            _STEPTranslator.SaveCopyAs(doc, oContext, oOptions, oData)
+        End If
+    Catch ex As Exception
+        ' Show error message if there's an exception.
+        MessageBox.Show(String.Format("Error exporting {0}: {1}", doc.DisplayName, ex.Message))
+    End Try
+End Sub
+
+Private Sub SetDWGTranslator()
+    For Each oAddIn As ApplicationAddIn In ThisApplication.ApplicationAddIns
+        If oAddIn.ClassIdString = "{C24E3AC2-122E-11D5-8E91-0010B541CD80}" Then
+            _DWGTranslator = oAddIn
+            Exit Sub
+        End If
+    Next
+    Throw New Exception("Could not access DWG translator.")
+End Sub
+
+Private Sub SetSTEPTranslator()
+    For Each oAddIn As ApplicationAddIn In ThisApplication.ApplicationAddIns
+        ' If the current AddIn is the STEP Translator, set it.
+        If oAddIn.ClassIdString = "{90AF7F40-0C01-11D5-8E83-0010B541CD80}" Then
+            _STEPTranslator = oAddIn
+            Exit Sub
+        End If
+    Next
+
+    ' If there's no STEP Translator, throw an exception.
+    Throw New Exception("Could not access STEP translator.")
+End Sub
+
+Private Function FindDrawingFile(PartOrAssemblyDoc As Document) As String
+    Dim fullFilename As String = PartOrAssemblyDoc.FullFileName
+    Dim Path As String = System.IO.Path.GetFullPath(fullFilename)
+    Dim filename As String = System.IO.Path.GetFileNameWithoutExtension(fullFilename)
+    Dim drawingFilename As String = ThisApplication.DesignProjectManager.ResolveFile(Path, filename & ".idw")
+    If drawingFilename = "" Then
+        Return ""
+    Else
+        Return drawingFilename
+    End If
+End Function
+
+Private Sub SaveCopyAsDWG(doc As Document, dirPath As String)
+    UpdateHoleTables(doc)
+    Dim oOptions As NameValueMap = ThisApplication.TransientObjects.CreateNameValueMap
+    Dim oContext As TranslationContext = ThisApplication.TransientObjects.CreateTranslationContext
+    oContext.Type = IOMechanismEnum.kFileBrowseIOMechanism
+
+  
+    Dim fileName As String = System.IO.Path.Combine(dirPath, System.IO.Path.GetFileNameWithoutExtension(doc.FullFileName) & ".dwg")
+
+    If Not System.IO.Directory.Exists(dirPath) Then
+        System.IO.Directory.CreateDirectory(dirPath)
+    End If
+
+    If _DWGTranslator.HasSaveCopyAsOptions(doc, oContext, oOptions) Then
+        oOptions.Value("Export_Acad_Version") = 4
+        oOptions.Value("Multi_Sheet") = 0
+        oOptions.Value("Replace_Fonts") = True
+
+        Dim oDataMedium As DataMedium = ThisApplication.TransientObjects.CreateDataMedium
+        oDataMedium.FileName = fileName
+        _DWGTranslator.SaveCopyAs(doc, oContext, oOptions, oDataMedium)
+    End If
+End Sub
+
+'This solution sucks, dont keep this
+
+
+End Class
