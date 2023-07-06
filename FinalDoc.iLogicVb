@@ -2,45 +2,41 @@
 Imports Inventor
 Imports System.Runtime.InteropServices
 
-
-
-
-
-
-
-'exports all parts related to the currently open assembly, ignores parts in any subassemblies
+'Run this at the highest level assembly for the project you want to export.
+'places a FinalDoc folder on your desktop
+'it will tell you "export complete" when done, you can do other stuff on your computer while it runs, be careful about running to many applications as this thing is RAM intensive
+'it automatically creates a folder for .stp and .dwg files
+'if a file isnt exporting, please make sure the part/assembly isnt set to purchased/ref/phantom. ONLY normal parts and assemblys will get .dwg files
 
 Public Class ThisRule
-Private _DWGTranslator As TranslatorAddIn
-Private _STEPTranslator As TranslatorAddIn
+    ' Variables to hold the translators
+    Private _DWGTranslator As TranslatorAddIn
+    Private _STEPTranslator As TranslatorAddIn
 
-Public Sub Main()
-    ' Get the application object
-    Dim app As Inventor.Application = ThisApplication
+    Public Sub Main()
+        ' Get the application object
+        Dim app As Inventor.Application = ThisApplication
 
-    ' Initialize the translators
-    SetDWGTranslator()
-    SetSTEPTranslator()
+        ' Initialize the translators
+        SetDWGTranslator()
+        SetSTEPTranslator()
 
-    ' Get the main assembly document
-    Dim mainAssembly As AssemblyDocument = app.ActiveDocument
+        ' Get the main assembly document
+        Dim mainAssembly As AssemblyDocument = app.ActiveDocument
 
-    ' Create a HashSet to track the names of processed subassemblies
-    Dim processedSubAssemblies As New HashSet(Of String)
+        ' Create HashSets to track processed subassemblies and parts
+        Dim processedSubAssemblies As New HashSet(Of String)
+        Dim processedParts As New HashSet(Of String)
 
-    ' Create a HashSet to track the names of processed parts
-    Dim processedParts As New HashSet(Of String)
+        ' Call the ProcessAssembly subroutine for the main assembly
+        ProcessAssembly(mainAssembly, "", processedSubAssemblies, processedParts, , , False)
 
-    ' Call the ProcessAssembly subroutine for the main assembly
-    ProcessAssembly(mainAssembly, "", processedSubAssemblies, processedParts)
-	
-	
-    MessageBox.Show("Export Complete")
+        MessageBox.Show("Export Complete")
+    End Sub
 
-
-End Sub
-
-Public Sub ProcessAssembly(assembly As AssemblyDocument, baseFolder As String, processedSubAssemblies As HashSet(Of String), processedParts As HashSet(Of String), Optional cadFolder As String = Nothing, Optional drawingsFolder As String = Nothing)
+    ' The ProcessAssembly subroutine recursively processes the main assembly and its subassemblies.
+    ' It creates output folders for each assembly and part, and exports .stp and .dwg files.
+Public Sub ProcessAssembly(assembly As AssemblyDocument, baseFolder As String, processedSubAssemblies As HashSet(Of String), processedParts As HashSet(Of String), Optional cadFolder As String = Nothing, Optional drawingsFolder As String = Nothing, Optional closeAssembly As Boolean = False)
     ' Get the part number
     Dim fullPartNumber As String = assembly.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString()
 
@@ -76,7 +72,7 @@ Public Sub ProcessAssembly(assembly As AssemblyDocument, baseFolder As String, p
             Dim subDrawingsFolder As String = If(subAssemblyDoc.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString().Length > 10, drawingsFolder, Nothing)
 
             ' Process the subassembly, passing the folders
-            ProcessAssembly(subAssemblyDoc, baseFolder, processedSubAssemblies, processedParts, subCadFolder, subDrawingsFolder)
+            ProcessAssembly(subAssemblyDoc, baseFolder, processedSubAssemblies, processedParts, subCadFolder, subDrawingsFolder, True)
         End If
     Next
 
@@ -102,8 +98,16 @@ Public Sub ProcessAssembly(assembly As AssemblyDocument, baseFolder As String, p
 
     ' Add the assembly's part number to the processed subassemblies HashSet
     processedSubAssemblies.Add(partNumber)
+	
+	  ' Close the assembly document if needed
+    If closeAssembly Then
+        assembly.Close(True)
+    End If
+	
 End Sub
 
+'it just renames one of the columns in the hole table and sets it back to the original name. 
+'We need this because inventor sucks with hole tables, if one day opening a drawing doesnt break hole tables, feel free to remove this.
 Private Sub UpdateHoleTables(doc As Document)
     If doc.DocumentType = DocumentTypeEnum.kDrawingDocumentObject Then
         Dim oDrawDoc As DrawingDocument = doc
@@ -124,6 +128,7 @@ Private Sub UpdateHoleTables(doc As Document)
     End If
 End Sub
 
+' The ExportAssemblyDWGs subroutine exports .dwg files for all normal parts in the given occurrences.
 Private Sub ExportAssemblyDWGs(occurrences As ComponentOccurrences, dirPath As String)
     For Each oOcc As ComponentOccurrence In occurrences
         ' Check if it's a part with a normal BOM structure or an assembly with a normal BOM structure
@@ -140,6 +145,7 @@ Private Sub ExportAssemblyDWGs(occurrences As ComponentOccurrences, dirPath As S
     Next
 End Sub
 
+' The ExportPartFiles subroutine exports .dwg files for all parts in the given assembly.
 Public Sub ExportPartFiles(assembly As AssemblyDocument, cadFolder As String, drawingsFolder As String, processedParts As HashSet(Of String))
     For Each occurrence As ComponentOccurrence In assembly.ComponentDefinition.Occurrences
         If (occurrence.BOMStructure = BOMStructureEnum.kNormalBOMStructure Or occurrence.BOMStructure = BOMStructureEnum.kPhantomBOMStructure) And TypeOf occurrence.Definition.Document Is PartDocument Then
@@ -160,6 +166,7 @@ Public Sub ExportPartFiles(assembly As AssemblyDocument, cadFolder As String, dr
     Next
 End Sub
 
+'calls the find drawing file function, and then sends the correct drawing file to be opened by the SaveCopyAsDWG function
 Private Sub ExportDWG(doc As Document, dirPath As String)
     Dim oDrawingDoc As String = FindDrawingFile(doc)
     If Not String.IsNullOrEmpty(oDrawingDoc) Then
@@ -170,6 +177,7 @@ Private Sub ExportDWG(doc As Document, dirPath As String)
     End If
 End Sub
 
+'Exports assemblys and .stp files, and organizes them into the CAD folder, DOES NOT export parts as .stp's
 Private Sub ExportStep(doc As Document, dirPath As String)
     Dim oOptions As NameValueMap = ThisApplication.TransientObjects.CreateNameValueMap
     Dim oContext As TranslationContext = ThisApplication.TransientObjects.CreateTranslationContext
@@ -197,6 +205,7 @@ Private Sub ExportStep(doc As Document, dirPath As String)
     End Try
 End Sub
 
+'idk I guess I need this to make the dwg translator work
 Private Sub SetDWGTranslator()
     For Each oAddIn As ApplicationAddIn In ThisApplication.ApplicationAddIns
         If oAddIn.ClassIdString = "{C24E3AC2-122E-11D5-8E91-0010B541CD80}" Then
@@ -206,7 +215,7 @@ Private Sub SetDWGTranslator()
     Next
     Throw New Exception("Could not access DWG translator.")
 End Sub
-
+'idk I guess I need this to make the step translator work
 Private Sub SetSTEPTranslator()
     For Each oAddIn As ApplicationAddIn In ThisApplication.ApplicationAddIns
         ' If the current AddIn is the STEP Translator, set it.
@@ -220,6 +229,8 @@ Private Sub SetSTEPTranslator()
     Throw New Exception("Could not access STEP translator.")
 End Sub
 
+
+'finds the drawing files associated with the parts/assembly
 Private Function FindDrawingFile(PartOrAssemblyDoc As Document) As String
     Dim fullFilename As String = PartOrAssemblyDoc.FullFileName
     Dim Path As String = System.IO.Path.GetFullPath(fullFilename)
@@ -232,6 +243,8 @@ Private Function FindDrawingFile(PartOrAssemblyDoc As Document) As String
     End If
 End Function
 
+
+'The function that saves the currently open .idw as a .dwg
 Private Sub SaveCopyAsDWG(doc As Document, dirPath As String)
     UpdateHoleTables(doc)
     Dim oOptions As NameValueMap = ThisApplication.TransientObjects.CreateNameValueMap
@@ -256,7 +269,7 @@ Private Sub SaveCopyAsDWG(doc As Document, dirPath As String)
     End If
 End Sub
 
-'This solution sucks, dont keep this
+
 
 
 End Class
