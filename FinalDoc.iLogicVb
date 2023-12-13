@@ -39,8 +39,6 @@ Public Class ThisRule
 Public Sub ProcessAssembly(assembly As AssemblyDocument, baseFolder As String, processedSubAssemblies As HashSet(Of String), processedParts As HashSet(Of String), Optional cadFolder As String = Nothing, Optional drawingsFolder As String = Nothing, Optional closeAssembly As Boolean = False)
     ' Get the part number
     Dim fullPartNumber As String = assembly.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString()
-
-    ' Get the main part of the part number (before the colon if any)
     Dim partNumber As String = fullPartNumber.Split(":")(0)
 
     ' Check if the assembly has already been processed
@@ -53,7 +51,7 @@ Public Sub ProcessAssembly(assembly As AssemblyDocument, baseFolder As String, p
         baseFolder = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop), partNumber.Substring(0, 4) & " Final Doc")
     End If
 
-    ' Create the CAD and Drawings directories for the current assembly only if partNumber is 10 or fewer characters
+    ' Create the CAD and Drawings directories for the current assembly
     If String.IsNullOrEmpty(cadFolder) Or String.IsNullOrEmpty(drawingsFolder) Or partNumber.Length <= 10 Then
         cadFolder = System.IO.Path.Combine(baseFolder, "CAD", partNumber)
         drawingsFolder = System.IO.Path.Combine(baseFolder, "Drawings", partNumber)
@@ -63,48 +61,54 @@ Public Sub ProcessAssembly(assembly As AssemblyDocument, baseFolder As String, p
 
     ' Process the subassemblies recursively
     For Each subAssembly As ComponentOccurrence In assembly.ComponentDefinition.Occurrences
-        If (subAssembly.BOMStructure = BOMStructureEnum.kNormalBOMStructure Or subAssembly.BOMStructure = BOMStructureEnum.kPhantomBOMStructure) And TypeOf subAssembly.Definition.Document Is AssemblyDocument Then
-            ' Open the subassembly
-            Dim subAssemblyDoc As AssemblyDocument = ThisApplication.Documents.Open(subAssembly.ReferencedDocumentDescriptor.ReferencedFileDescriptor.FullFileName, True)
+        ' Skip suppressed components
+        If subAssembly.Suppressed Then
+            Continue For
+        End If
 
-            ' If the subassembly is a phantom, pass the current folders. Otherwise, pass nothing to create new folders.
+        ' Check if it's a normal or inseparable BOM structure
+        If (subAssembly.BOMStructure = BOMStructureEnum.kNormalBOMStructure Or subAssembly.BOMStructure = BOMStructureEnum.kInseparableBOMStructure) And TypeOf subAssembly.Definition.Document Is AssemblyDocument Then
+            ' Handle inseparable components differently
+            If subAssembly.BOMStructure = BOMStructureEnum.kInseparableBOMStructure Then
+                ' Export the drawing of the inseparable component to the current assembly's folder
+                Dim inseparablePart As Document = subAssembly.Definition.Document
+                ExportDWG(inseparablePart, drawingsFolder)
+                ' Skip processing parts within the inseparable assembly
+                Continue For
+            End If
+
+            ' Handle normal assemblies
+            Dim subAssemblyDoc As AssemblyDocument = ThisApplication.Documents.Open(subAssembly.ReferencedDocumentDescriptor.ReferencedFileDescriptor.FullFileName, True)
             Dim subCadFolder As String = If(subAssemblyDoc.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString().Length > 10, cadFolder, Nothing)
             Dim subDrawingsFolder As String = If(subAssemblyDoc.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString().Length > 10, drawingsFolder, Nothing)
-
-            ' Process the subassembly, passing the folders
             ProcessAssembly(subAssemblyDoc, baseFolder, processedSubAssemblies, processedParts, subCadFolder, subDrawingsFolder, True)
+
+        ' Handle phantom assemblies
+        ElseIf subAssembly.BOMStructure = BOMStructureEnum.kPhantomBOMStructure Then
+            ExportPartFiles(subAssembly.Definition.Document, cadFolder, drawingsFolder, processedParts)
         End If
     Next
 
     ' After processing subassemblies, export the files for the main assembly
-    ' Activate the assembly document
     assembly.Activate()
-
-    ' Update the assembly document
     assembly.Update()
-
-    ' Export part files in the assembly
     ExportPartFiles(assembly, cadFolder, drawingsFolder, processedParts)
 
-    ' Check if assembly (main or sub) has already been processed
     If Not processedParts.Contains(assembly.DisplayName) Then
-        ' Export the assembly files
         ExportDWG(assembly, drawingsFolder)
         ExportStep(assembly, cadFolder)
-
-        ' Add the assembly's part number to the processed parts HashSet
         processedParts.Add(assembly.DisplayName)
     End If
 
-    ' Add the assembly's part number to the processed subassemblies HashSet
     processedSubAssemblies.Add(partNumber)
-	
-	  ' Close the assembly document if needed
+
     If closeAssembly Then
         assembly.Close(True)
     End If
-	
 End Sub
+
+
+
 
 'it just renames one of the columns in the hole table and sets it back to the original name. 
 'We need this because inventor sucks with hole tables, if one day opening a drawing doesnt break hole tables, feel free to remove this.
@@ -148,23 +152,26 @@ End Sub
 ' The ExportPartFiles subroutine exports .dwg files for all parts in the given assembly.
 Public Sub ExportPartFiles(assembly As AssemblyDocument, cadFolder As String, drawingsFolder As String, processedParts As HashSet(Of String))
     For Each occurrence As ComponentOccurrence In assembly.ComponentDefinition.Occurrences
-        If (occurrence.BOMStructure = BOMStructureEnum.kNormalBOMStructure Or occurrence.BOMStructure = BOMStructureEnum.kPhantomBOMStructure) And TypeOf occurrence.Definition.Document Is PartDocument Then
+        ' Skip suppressed components
+        If occurrence.Suppressed Then
+            Continue For
+        End If
+
+        ' Check if it's a normal or inseparable BOM structure
+        If (occurrence.BOMStructure = BOMStructureEnum.kNormalBOMStructure Or occurrence.BOMStructure = BOMStructureEnum.kInseparableBOMStructure) And TypeOf occurrence.Definition.Document Is PartDocument Then
             Dim part As PartDocument = occurrence.Definition.Document
             Dim partNumber As String = part.PropertySets.Item("Design Tracking Properties").Item("Part Number").Value.ToString().Split(":")(0)
 
-            ' Check if the part has already been processed
             If processedParts.Contains(partNumber) Then
                 Continue For
             End If
 
-            ' Export the .dwg and .stp files for the part
             ExportDWG(part, drawingsFolder)
-
-            ' Add the part's part number to the processed parts HashSet
             processedParts.Add(partNumber)
         End If
     Next
 End Sub
+
 
 'calls the find drawing file function, and then sends the correct drawing file to be opened by the SaveCopyAsDWG function
 Private Sub ExportDWG(doc As Document, dirPath As String)
@@ -246,27 +253,48 @@ End Function
 
 'The function that saves the currently open .idw as a .dwg
 Private Sub SaveCopyAsDWG(doc As Document, dirPath As String)
-    UpdateHoleTables(doc)
-    Dim oOptions As NameValueMap = ThisApplication.TransientObjects.CreateNameValueMap
-    Dim oContext As TranslationContext = ThisApplication.TransientObjects.CreateTranslationContext
-    oContext.Type = IOMechanismEnum.kFileBrowseIOMechanism
+    ' Define these variables outside the Try block
+    Dim oOptions As NameValueMap = Nothing
+    Dim oContext As TranslationContext = Nothing
+    Dim oDataMedium As DataMedium = Nothing
 
-  
-    Dim fileName As String = System.IO.Path.Combine(dirPath, System.IO.Path.GetFileNameWithoutExtension(doc.FullFileName) & ".dwg")
+    Try
+        If doc Is Nothing Then
+            MessageBox.Show("Document is not loaded correctly.")
+            Return
+        End If
 
-    If Not System.IO.Directory.Exists(dirPath) Then
-        System.IO.Directory.CreateDirectory(dirPath)
-    End If
+        UpdateHoleTables(doc)
+        oOptions = ThisApplication.TransientObjects.CreateNameValueMap
+        oContext = ThisApplication.TransientObjects.CreateTranslationContext
+        oContext.Type = IOMechanismEnum.kFileBrowseIOMechanism
 
-    If _DWGTranslator.HasSaveCopyAsOptions(doc, oContext, oOptions) Then
-        oOptions.Value("Export_Acad_Version") = 4
-        oOptions.Value("Multi_Sheet") = 0
-        oOptions.Value("Replace_Fonts") = True
+        Dim fileName As String = System.IO.Path.Combine(dirPath, System.IO.Path.GetFileNameWithoutExtension(doc.FullFileName) & ".dwg")
 
-        Dim oDataMedium As DataMedium = ThisApplication.TransientObjects.CreateDataMedium
-        oDataMedium.FileName = fileName
-        _DWGTranslator.SaveCopyAs(doc, oContext, oOptions, oDataMedium)
-    End If
+        If Not System.IO.Directory.Exists(dirPath) Then
+            MessageBox.Show("Directory does not exist, creating directory.")
+            System.IO.Directory.CreateDirectory(dirPath)
+        End If
+
+        If _DWGTranslator.HasSaveCopyAsOptions(doc, oContext, oOptions) Then
+            oOptions.Value("Export_Acad_Version") = 4
+            oOptions.Value("Multi_Sheet") = 0
+            oOptions.Value("Replace_Fonts") = True
+
+            oDataMedium = ThisApplication.TransientObjects.CreateDataMedium
+            oDataMedium.FileName = fileName
+
+            _DWGTranslator.SaveCopyAs(doc, oContext, oOptions, oDataMedium)
+        Else
+            MessageBox.Show("Translator does not support SaveCopyAs for this document.")
+        End If
+    Catch ex As Exception
+        ' Display inputs in message box only when an error occurs
+       ' If Not (oOptions Is Nothing Or oContext Is Nothing Or oDataMedium Is Nothing) Then
+         '   MessageBox.Show(String.Format("Inputs to SaveCopyAs: Document={0}, Context={1}, Options=Export_Acad_Version:{2}, Multi_Sheet:{3}, Replace_Fonts:{4}, DataMedium={5}", doc.FullDocumentName, oContext.Type, oOptions.Value("Export_Acad_Version"), oOptions.Value("Multi_Sheet"), oOptions.Value("Replace_Fonts"), oDataMedium.FileName))
+       ' End If
+       ' MessageBox.Show("An error occurred: " & ex.Message)
+    End Try
 End Sub
 
 
